@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use elliptic_curve::{Field, Group, ScalarPrimitive};
 use magikitten::Transcript;
 use rand_core::OsRng;
@@ -26,12 +27,35 @@ pub type TripleGenerationOutputMany<C> = Vec<(TripleShare<C>, TriplePub<C>)>;
 
 const LABEL: &[u8] = b"cait-sith v0.8.0 triple generation";
 
+static GLOBAL_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+pub struct DoGenerationCounter {
+}
+
+impl DoGenerationCounter {
+    fn get_counter() -> usize {
+        GLOBAL_COUNTER.load(Ordering::SeqCst)
+    }
+
+    fn new() -> DoGenerationCounter {
+        GLOBAL_COUNTER.fetch_add(1, Ordering::SeqCst);
+        DoGenerationCounter {}
+    }
+}
+
+impl Drop for DoGenerationCounter {
+    fn drop(&mut self) {
+        GLOBAL_COUNTER.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn do_generation<C: CSCurve>(
     ctx: Context<'_>,
     participants: ParticipantList,
     me: Participant,
     threshold: usize,
 ) -> Result<TripleGenerationOutput<C>, ProtocolError> {
+    let _not_used = DoGenerationCounter::new();
     let mut rng = OsRng;
     let mut chan = ctx.shared_channel();
     let mut transcript = Transcript::new(LABEL);
