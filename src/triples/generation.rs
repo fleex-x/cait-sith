@@ -33,11 +33,11 @@ pub struct DoGenerationCounter {
 }
 
 impl DoGenerationCounter {
-    fn get_counter() -> usize {
+    pub fn get_counter() -> usize {
         GLOBAL_COUNTER.load(Ordering::SeqCst)
     }
 
-    fn new() -> DoGenerationCounter {
+    pub fn new() -> DoGenerationCounter {
         GLOBAL_COUNTER.fetch_add(1, Ordering::SeqCst);
         DoGenerationCounter {}
     }
