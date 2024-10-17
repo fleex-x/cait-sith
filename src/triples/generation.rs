@@ -1,7 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use elliptic_curve::{Field, Group, ScalarPrimitive};
 use magikitten::Transcript;
 use rand_core::OsRng;
+use smol::lock::futures;
+use smol::Timer;
+use ::futures::{select, FutureExt};
 
 use crate::crypto::{Commitment, Randomizer};
 use crate::triples::multiplication::multiplication_many;
@@ -110,7 +114,12 @@ async fn do_generation<C: CSCurve>(
         let f0 = f.evaluate_zero();
         multiplication::<C>(ctx, my_confirmation, participants.clone(), me, e0, f0)
     };
-    let multiplication_task = ctx.spawn(fut);
+    let multiplication_task = ctx.spawn(async move {
+        select! {
+            result = fut.fuse() => Some(result),
+            _ = Timer::after(Duration::from_secs(8)).fuse() => None,
+        }
+    });
 
     // Spec 2.5
     let wait1 = chan.next_waitpoint();
@@ -357,7 +366,11 @@ async fn do_generation<C: CSCurve>(
     }
 
     // Spec 4.4
-    let l0 = ctx.run(multiplication_task).await?;
+    let l0_opt = ctx.run(multiplication_task).await;
+    let l0 = match l0_opt {
+        Some(val) => val?,
+        None => return Err(ProtocolError::AssertionFailed("protocol was timed out".to_string()))
+    };
 
     // Spec 4.5
     let hat_big_c_i = C::ProjectivePoint::generator() * l0;
