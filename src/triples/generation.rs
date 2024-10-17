@@ -1,11 +1,8 @@
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::Poll;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use elliptic_curve::{Field, Group, ScalarPrimitive};
 use magikitten::Transcript;
 use rand_core::OsRng;
-use ::futures::{FutureExt, Future};
 
 use crate::crypto::{Commitment, Randomizer};
 use crate::triples::multiplication::multiplication_many;
@@ -30,45 +27,6 @@ pub type TripleGenerationOutput<C> = (TripleShare<C>, TriplePub<C>);
 pub type TripleGenerationOutputMany<C> = Vec<(TripleShare<C>, TriplePub<C>)>;
 
 const LABEL: &[u8] = b"cait-sith v0.8.0 triple generation";
-
-
-struct FutureWithTimeout<Fut> {
-    inner_future: Fut,
-    timeout_duration: Duration,
-    start_time: Instant,
-}
-
-impl<Fut> FutureWithTimeout<Fut> {
-    fn new(inner_future: Fut, timeout_duration: Duration) -> Self {
-        FutureWithTimeout {
-            inner_future,
-            timeout_duration,
-            start_time: Instant::now(),
-        }
-    }
-}
-
-impl<Fut> Future for FutureWithTimeout<Fut>
-where
-    Fut: Future,
-{
-    type Output = Option<Fut::Output>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
-
-
-        if this.start_time.elapsed() >= this.timeout_duration {
-            return Poll::Ready(None);
-        }
-
-        let inner_future = unsafe { Pin::new_unchecked(&mut this.inner_future) };
-        match inner_future.poll(cx) {
-            Poll::Ready(output) => Poll::Ready(Some(output)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
 
 static GLOBAL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -153,7 +111,9 @@ async fn do_generation<C: CSCurve>(
         let f0 = f.evaluate_zero();
         multiplication::<C>(ctx, my_confirmation, participants.clone(), me, e0, f0)
     };
-    let multiplication_task = ctx.spawn(FutureWithTimeout::new(fut, Duration::from_secs(8)));
+    let multiplication_task = ctx.spawn(
+        async_std::future::timeout(Duration::from_secs(8), fut)
+    );
 
     // Spec 2.5
     let wait1 = chan.next_waitpoint();
@@ -402,8 +362,8 @@ async fn do_generation<C: CSCurve>(
     // Spec 4.4
     let l0_opt = ctx.run(multiplication_task).await;
     let l0 = match l0_opt {
-        Some(val) => val?,
-        None => return Err(ProtocolError::AssertionFailed("protocol was timed out".to_string()))
+        Ok(val) => val?,
+        Err(_) => return Err(ProtocolError::AssertionFailed("protocol was timed out".to_string()))
     };
 
     // Spec 4.5
