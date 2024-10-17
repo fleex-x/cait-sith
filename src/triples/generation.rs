@@ -1,11 +1,11 @@
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::task::Poll;
+use std::time::{Duration, Instant};
 use elliptic_curve::{Field, Group, ScalarPrimitive};
 use magikitten::Transcript;
 use rand_core::OsRng;
-use smol::lock::futures;
-use smol::Timer;
-use ::futures::{select, FutureExt};
+use ::futures::{FutureExt, Future};
 
 use crate::crypto::{Commitment, Randomizer};
 use crate::triples::multiplication::multiplication_many;
@@ -30,6 +30,45 @@ pub type TripleGenerationOutput<C> = (TripleShare<C>, TriplePub<C>);
 pub type TripleGenerationOutputMany<C> = Vec<(TripleShare<C>, TriplePub<C>)>;
 
 const LABEL: &[u8] = b"cait-sith v0.8.0 triple generation";
+
+
+struct FutureWithTimeout<Fut> {
+    inner_future: Fut,
+    timeout_duration: Duration,
+    start_time: Instant,
+}
+
+impl<Fut> FutureWithTimeout<Fut> {
+    fn new(inner_future: Fut, timeout_duration: Duration) -> Self {
+        FutureWithTimeout {
+            inner_future,
+            timeout_duration,
+            start_time: Instant::now(),
+        }
+    }
+}
+
+impl<Fut> Future for FutureWithTimeout<Fut>
+where
+    Fut: Future,
+{
+    type Output = Option<Fut::Output>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+
+
+        if this.start_time.elapsed() >= this.timeout_duration {
+            return Poll::Ready(None);
+        }
+
+        let inner_future = unsafe { Pin::new_unchecked(&mut this.inner_future) };
+        match inner_future.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(Some(output)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 
 static GLOBAL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -114,12 +153,7 @@ async fn do_generation<C: CSCurve>(
         let f0 = f.evaluate_zero();
         multiplication::<C>(ctx, my_confirmation, participants.clone(), me, e0, f0)
     };
-    let multiplication_task = ctx.spawn(async move {
-        select! {
-            result = fut.fuse() => Some(result),
-            _ = Timer::after(Duration::from_secs(8)).fuse() => None,
-        }
-    });
+    let multiplication_task = ctx.spawn(FutureWithTimeout::new(fut, Duration::from_secs(8)));
 
     // Spec 2.5
     let wait1 = chan.next_waitpoint();
