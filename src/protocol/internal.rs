@@ -53,6 +53,7 @@ use smol::{
 };
 use std::{collections::HashMap, error, future::Future, sync::Arc};
 use std::time::Duration;
+use crate::protocol::ProtocolError::AssertionFailed;
 use crate::serde::{decode, encode_with_tag};
 
 use super::{Action, MessageData, Participant, Protocol, ProtocolError};
@@ -504,9 +505,11 @@ impl<'a, T> Protocol for ProtocolExecutor<'a, T> {
             let out = self
                 .ret_r
                 .recv()
-                .await
-                .expect("failed to retrieve return value");
-            Ok::<_, ProtocolError>(Action::Return(out?))
+                .await;
+            if out.is_err() {
+                return Err(AssertionFailed("Protocol could not be executed in provided time".to_string()));
+            }
+            Ok::<_, ProtocolError>(Action::Return(out.unwrap()?))
         };
         let fut_outgoing = async {
             let action: Action<Self::Output> = match self.ctx.comms.outgoing().await {
