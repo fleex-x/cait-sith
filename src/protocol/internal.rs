@@ -481,7 +481,7 @@ impl<'a, T: Send + 'a> ProtocolExecutor<'a, T> {
                 .expect("failed to return result of protocol");
         };
 
-        let _ = ctx.executor.spawn(fut);
+        let _ = ctx.executor.spawn(fut).detach();
 
         Self {
             ctx,
