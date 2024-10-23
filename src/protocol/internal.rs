@@ -482,9 +482,9 @@ impl<'a, T: Send + 'a> ProtocolExecutor<'a, T> {
                 .expect("failed to return result of protocol");
         };
 
-        ctx.executor.spawn(
+        let _ = ctx.executor.spawn(
             async_std::future::timeout(Duration::from_secs(8), fut)
-        ).detach();
+        );
 
         Self {
             ctx,
