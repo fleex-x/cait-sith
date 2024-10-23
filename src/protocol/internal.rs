@@ -504,7 +504,7 @@ impl<'a, T> Protocol for ProtocolExecutor<'a, T> {
                 .recv()
                 .await;
             if out.is_err() {
-                return Err(AssertionFailed("Protocol could not be executed in provided time".to_string()));
+                return Err(AssertionFailed("Protocol coroutine probably has stopped".to_string()));
             }
             Ok::<_, ProtocolError>(Action::Return(out.unwrap()?))
         };
