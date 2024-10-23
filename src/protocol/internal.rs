@@ -52,7 +52,7 @@ use smol::{
     Executor, Task,
 };
 use std::{collections::HashMap, error, future::Future, sync::Arc};
-
+use crate::protocol::ProtocolError::AssertionFailed;
 use crate::serde::{decode, encode_with_tag};
 
 use super::{Action, MessageData, Participant, Protocol, ProtocolError};
@@ -481,7 +481,7 @@ impl<'a, T: Send + 'a> ProtocolExecutor<'a, T> {
                 .expect("failed to return result of protocol");
         };
 
-        ctx.executor.spawn(fut).detach();
+        let _ = ctx.executor.spawn(fut);
 
         Self {
             ctx,
@@ -502,9 +502,11 @@ impl<'a, T> Protocol for ProtocolExecutor<'a, T> {
             let out = self
                 .ret_r
                 .recv()
-                .await
-                .expect("failed to retrieve return value");
-            Ok::<_, ProtocolError>(Action::Return(out?))
+                .await;
+            if out.is_err() {
+                return Err(AssertionFailed("Protocol coroutine probably has stopped".to_string()));
+            }
+            Ok::<_, ProtocolError>(Action::Return(out.unwrap()?))
         };
         let fut_outgoing = async {
             let action: Action<Self::Output> = match self.ctx.comms.outgoing().await {
