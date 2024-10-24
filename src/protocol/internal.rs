@@ -472,7 +472,7 @@ struct ProtocolExecutor<'a, T> {
 impl<'a, T: Send + 'a> ProtocolExecutor<'a, T> {
     fn new(
         ctx: Context<'a>,
-        fut: impl Future<Output = Result<T, ProtocolError>> + Send + 'a,
+        fut: impl Future<Output = Result<T, ProtocolError>> + Send + 'a + Sync,
     ) -> Self {
         let (ret_s, ret_r) = smol::channel::bounded(1);
         let fut = async move {
@@ -570,7 +570,7 @@ impl<'a, T> Protocol for ProtocolExecutor<'a, T> {
 /// Run a protocol, converting a future into an instance of the Protocol trait.
 pub fn make_protocol<'a, T: Send + 'a>(
     ctx: Context<'a>,
-    fut: impl Future<Output = Result<T, ProtocolError>> + Send + 'a,
+    fut: impl Future<Output = Result<T, ProtocolError>> + Send + 'a + Sync,
 ) -> impl Protocol<Output = T> + 'a {
     ProtocolExecutor::new(ctx, fut)
 }
