@@ -52,7 +52,7 @@ use smol::{
     Executor, Task,
 };
 use std::{collections::HashMap, error, future::Future, sync::Arc};
-use std::time::Duration;
+use std::pin::Pin;
 use crate::protocol::ProtocolError::AssertionFailed;
 use crate::serde::{decode, encode_with_tag};
 
@@ -465,6 +465,7 @@ impl<'a> Context<'a> {
 struct ProtocolExecutor<'a, T> {
     ctx: Context<'a>,
     ret_r: channel::Receiver<Result<T, ProtocolError>>,
+    protocol_fut: Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
     done: bool,
 }
 
@@ -482,14 +483,11 @@ impl<'a, T: Send + 'a> ProtocolExecutor<'a, T> {
                 .expect("failed to return result of protocol");
         };
 
-        let _ = ctx.executor.spawn(
-            async_std::future::timeout(Duration::from_secs(8), fut)
-        );
-
         Self {
             ctx,
             ret_r,
             done: false,
+            protocol_fut: Box::pin(fut),
         }
     }
 }
@@ -531,9 +529,26 @@ impl<'a, T> Protocol for ProtocolExecutor<'a, T> {
         };
         // The priority is first to send all outgoing messages before returning,
         // otherwise we might deadlock other people, by preventing them from receiving the output.
+
+        let get_action_fut = future::or(
+            fut_outgoing,
+                   future::or(
+                       fut_return,
+                            future::or(
+                                fut_wait,
+                                async {
+                                    let _ = &mut self.protocol_fut.as_mut().await;
+                                    loop {
+                                        future::yield_now().await;
+                                    }
+                                }
+                            ),
+                   )
+        );
+
         let action = block_on(
             self.ctx
-                .run(future::or(fut_outgoing, future::or(fut_return, fut_wait))),
+                .run(get_action_fut),
         );
         match action {
             Err(_) => self.done = true,
